@@ -1,41 +1,33 @@
-import { Analytics } from '@vercel/analytics/next'
-import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
-import './globals.css'
-
-const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
-  subsets: ['latin'],
-})
+import type { Metadata, Viewport } from "next"
+import "./globals.css"
 
 export const metadata: Metadata = {
-  title: 'EGGCORP PORTAL v3.1 — Enterprise Egg Interaction Suite',
+  title: "EGGCORP PORTAL v3.1 — Enterprise Egg Interaction Suite",
   description:
-    'A mission-critical multiplayer egg-clicking portal. Definitely not descending into madness. Click responsibly.',
-  generator: 'v0.app',
+    "A mission-critical multiplayer egg-clicking portal. Definitely not descending into madness. Click responsibly.",
+  generator: "v0.app",
   icons: {
     icon: [
       {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
+        url: "/icon-light-32x32.png",
+        media: "(prefers-color-scheme: light)",
       },
       {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
+        url: "/icon-dark-32x32.png",
+        media: "(prefers-color-scheme: dark)",
       },
       {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
+        url: "/icon.svg",
+        type: "image/svg+xml",
       },
     ],
-    apple: '/apple-icon.png',
+    apple: "/apple-icon.png",
   },
 }
 
 export const viewport: Viewport = {
-  colorScheme: 'light',
-  themeColor: '#000080',
+  colorScheme: "light",
+  themeColor: "#000080",
   userScalable: false,
 }
 
@@ -45,14 +37,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} bg-[var(--win-gray)]`}
-    >
-      <body className="font-sans antialiased bg-[var(--win-gray)]">
-        {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
-      </body>
+    <html lang="en" className="bg-(--win-gray)">
+      <body className="bg-(--win-gray) font-sans antialiased">{children}</body>
     </html>
   )
 }

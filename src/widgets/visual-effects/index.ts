@@ -1,5 +1,5 @@
 export { ChaosOverlay, NoticeBanner, WindowsError, ZenOverlay } from "./ui/chaos-overlays"
 export { ConfettiBurst } from "./ui/confetti-burst"
 export { CursorSparkles } from "./ui/cursor-sparkles"
-export { MatrixRain } from "./ui/matrix-rain"
+export { ModernGridBackground } from "./ui/modern-grid-background"
 export { Y2kDecor } from "./ui/y2k-decor"

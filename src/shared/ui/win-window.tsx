@@ -16,7 +16,6 @@ export function WinWindow({ title, children, className = "", alert = false, icon
       className={`bevel-out hard-shadow-sm bg-[var(--win-gray)] no-select ${className}`}
       aria-label={title}
     >
-      {/* Title bar */}
       <header
         className={`flex items-center justify-between gap-2 px-1.5 py-1 ${
           alert ? "blink-alert" : "bg-[var(--win-navy)] text-white"

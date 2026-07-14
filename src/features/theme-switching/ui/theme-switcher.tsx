@@ -5,6 +5,9 @@ import { THEMES, useTheme, type ThemeId, type ThemeMeta } from "@/entities/theme
 
 /* A tiny egg preview rendered in the era's own style. */
 function MiniEgg({ id }: { id: ThemeId }) {
+  if (id === "cringe") {
+    return <span className="inline-block text-base leading-none chaos-hue">🥴</span>
+  }
   if (id === "terminal") {
     return (
       <span className="font-pixel text-[13px] leading-none text-[#00ff00]">{"<o>"}</span>
@@ -90,7 +93,7 @@ export function ThemeSwitcher() {
 
   const runCommand = () => {
     const raw = cmd.trim().toLowerCase().replace(/^theme\s+/, "")
-    const byIndex = ["", "win95", "y2k", "minimal", "terminal"][Number(raw)] as ThemeId | undefined
+    const byIndex = THEMES[Number(raw) - 1]?.id
     const match = THEMES.find(
       (t) => t.id === raw || t.name.toLowerCase() === raw || t.year === raw,
     )
@@ -100,7 +103,7 @@ export function ThemeSwitcher() {
       setCmd("")
       setCmdError("")
     } else {
-      setCmdError(`unknown era: "${raw || "∅"}" — try win95 | y2k | minimal | terminal`)
+      setCmdError(`unknown era: "${raw || "∅"}" — try ${THEMES.map((t) => t.id).join(" | ")}`)
     }
   }
 

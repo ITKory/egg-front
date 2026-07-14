@@ -9,18 +9,35 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { DEFAULT_THEME, STORAGE_KEY, getThemeMeta, type ThemeId } from "./themes"
+import { DEFAULT_THEME, STORAGE_KEY, THEMES, getThemeMeta, type ThemeId } from "./themes"
 
 type ThemeContextValue = {
   theme: ThemeId
   setTheme: (id: ThemeId) => void
-  /** True for the brief transition window after a theme change (for glitch/flash FX). */
   transitioning: boolean
-  /** Toast text shown after switching, or null. */
   toast: string | null
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null)
+
+function getSavedTheme(): ThemeId | null {
+  if (typeof window === "undefined") return null
+
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY) as ThemeId | null
+    return saved && THEMES.some((themeMeta) => themeMeta.id === saved) ? saved : null
+  } catch {
+    return null
+  }
+}
+
+function saveTheme(id: ThemeId) {
+  try {
+    localStorage.setItem(STORAGE_KEY, id)
+  } catch {
+    return
+  }
+}
 
 export function useTheme() {
   const ctx = useContext(ThemeContext)
@@ -35,19 +52,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const transTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Load saved theme once on mount.
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY) as ThemeId | null
-      if (saved && ["win95", "y2k", "minimal", "terminal"].includes(saved)) {
-        setThemeState(saved)
-      }
-    } catch {
-      // ignore storage errors
+    let cancelled = false
+
+    queueMicrotask(() => {
+      const saved = getSavedTheme()
+      if (!cancelled && saved) setThemeState(saved)
+    })
+
+    return () => {
+      cancelled = true
     }
   }, [])
 
-  // Keep the document element's data-theme in sync so global CSS can react.
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme)
   }, [theme])
@@ -56,18 +73,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     (id: ThemeId) => {
       setThemeState((prev) => {
         if (prev === id) return prev
-        try {
-          localStorage.setItem(STORAGE_KEY, id)
-        } catch {
-          // ignore
-        }
+        saveTheme(id)
 
-        // Brief transition flash/glitch.
         setTransitioning(true)
         if (transTimer.current) clearTimeout(transTimer.current)
         transTimer.current = setTimeout(() => setTransitioning(false), 450)
 
-        // Toast notification.
         setToast(`ERA CHANGED: ${getThemeMeta(id).name.toUpperCase()}`)
         if (toastTimer.current) clearTimeout(toastTimer.current)
         toastTimer.current = setTimeout(() => setToast(null), 2600)

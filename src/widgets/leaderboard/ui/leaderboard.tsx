@@ -19,7 +19,7 @@ export function Leaderboard({ rows }: { rows: LeaderRow[] }) {
           <tbody>
             {top.map((r, i) => (
               <tr
-                key={r.name}
+                key={r.id ?? r.name}
                 className={
                   r.you
                     ? "bg-[var(--win-yellow)] font-bold text-[var(--win-navy)]"

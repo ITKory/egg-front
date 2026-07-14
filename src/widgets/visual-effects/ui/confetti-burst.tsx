@@ -1,27 +1,28 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useMemo } from "react"
 
 type Piece = { id: number; left: number; delay: number; dur: number; color: string; size: number }
 
 const COLORS = ["#000080", "#ff0000", "#008000", "#ffff80", "#1084d0", "#ffffff"]
 
-export function ConfettiBurst({ trigger }: { trigger: number }) {
-  const [pieces, setPieces] = useState<Piece[]>([])
+function seededRandom(seed: number) {
+  const x = Math.sin(seed) * 10000
+  return x - Math.floor(x)
+}
 
-  useEffect(() => {
-    if (trigger === 0) return
-    const batch: Piece[] = Array.from({ length: 90 }, (_, i) => ({
+export function ConfettiBurst({ trigger }: { trigger: number }) {
+  const pieces = useMemo<Piece[]>(() => {
+    if (trigger === 0) return []
+
+    return Array.from({ length: 90 }, (_, i) => ({
       id: trigger * 1000 + i,
-      left: Math.random() * 100,
-      delay: Math.random() * 0.4,
-      dur: 1.6 + Math.random() * 1.6,
-      color: COLORS[Math.floor(Math.random() * COLORS.length)],
-      size: 6 + Math.random() * 8,
+      left: seededRandom(trigger * 101 + i) * 100,
+      delay: seededRandom(trigger * 211 + i) * 0.4,
+      dur: 1.6 + seededRandom(trigger * 307 + i) * 1.6,
+      color: COLORS[Math.floor(seededRandom(trigger * 401 + i) * COLORS.length)],
+      size: 6 + seededRandom(trigger * 503 + i) * 8,
     }))
-    setPieces(batch)
-    const t = setTimeout(() => setPieces([]), 3600)
-    return () => clearTimeout(t)
   }, [trigger])
 
   if (pieces.length === 0) return null

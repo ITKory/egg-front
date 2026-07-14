@@ -2,35 +2,38 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
-  ACTIONS,
-  EGG_PHASE_LABELS,
-  EMOTES,
   EVENTS,
-  FAKE_USERS,
   OVERLAY_DURATION,
   WINDOWS_ERRORS,
   ZEN_CALM,
   type EventId,
   type OverlayId,
+  type ScreenEmote,
   eggIntegrityFor,
   eggPhaseFor,
   nowStamp,
   randomFrom,
 } from "@/entities/game"
 import { useTheme } from "@/entities/theme"
+import {
+  actorFrom,
+  asRecord,
+  connectedUsersFrom,
+  emoteFrom,
+  leaderboardEntriesFrom,
+  numberFrom,
+  parseServerEventPayload,
+  SERVER_EVENT_TO_CLIENT,
+  stringFrom,
+  type ServerConnectedUser,
+  type ServerLeaderboardEntry,
+  type ServerMessage,
+} from "@/features/chaos-game/api/chaos-egg-contract"
+import { fetchChaosLeaderboard, fetchChaosState } from "@/features/chaos-game/api/chaos-egg-client"
 import { sfx, setMuted as setSfxMuted } from "@/shared/lib/sounds"
-
-export type TickerMessage = {
-  id: number
-  time: string
-  user: string
-  text: string
-  system?: boolean
-}
-
-export type LeaderRow = { name: string; clicks: number; you?: boolean }
-export type WinError = { id: number; code: string; msg: string }
-export type ZenMessage = { id: number; text: string; scary: boolean }
+import { buildLeaderboardRows } from "./leaderboard"
+import { useChaosSocket } from "./use-chaos-socket"
+import type { ConnectedUserRow, LeaderRow, TickerMessage, WinError, ZenMessage } from "./types"
 
 const KONAMI = [
   "ArrowUp",
@@ -45,52 +48,75 @@ const KONAMI = [
   "a",
 ]
 
+const CRINGE_CLICK_COMBOS = [2, 1, 3, 2, 3, 1] as const
+const CRINGE_CLICK_DELAY_MS = 70
+const CRINGE_AUTO_EMOTES = ["💀", "😭", "🤡", "🥴", "✨"] as const
+
 let msgId = 0
 let errId = 0
+let screenEmoteId = 0
+
+function buildConnectedUserRows(
+  users: ServerConnectedUser[],
+  currentUserId: string | null,
+  currentName: string | null,
+): ConnectedUserRow[] {
+  return users.map((user, index) => {
+    const id = stringFrom(user.userId)
+    const you = Boolean(currentUserId && id === currentUserId)
+    return {
+      id,
+      name: you ? currentName ?? "YOU" : stringFrom(user.username) ?? id ?? `User ${index + 1}`,
+      you,
+    }
+  })
+}
 
 export function useChaosGame() {
   const { theme } = useTheme()
   const themeRef = useRef(theme)
-  themeRef.current = theme
 
-  const [clicks, setClicks] = useState(48273)
+  const [clicks, setClicks] = useState(0)
   const [event, setEvent] = useState<EventId>("NORMAL")
   const [eventTimeLeft, setEventTimeLeft] = useState(0)
+  const [eventMessage, setEventMessage] = useState<string | null>(null)
   const [ticker, setTicker] = useState<TickerMessage[]>([])
-  const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([])
+  const [leaderboard, setLeaderboard] = useState<LeaderRow[]>([
+    { id: "local-player", name: "YOU", clicks: 0, you: true },
+  ])
+  const [connectedUsers, setConnectedUsers] = useState(0)
+  const [connectedUserList, setConnectedUserList] = useState<ConnectedUserRow[]>([])
+  const [screenEmotes, setScreenEmotes] = useState<ScreenEmote[]>([])
+  const [username, setUsername] = useState<string | null>(null)
   const [muted, setMuted] = useState(false)
   const [chaosMode, setChaosMode] = useState(false)
   const [bureaucracyOpen, setBureaucracyOpen] = useState(false)
   const [shakeKey, setShakeKey] = useState(0)
   const [milestoneKey, setMilestoneKey] = useState(0)
-  const [clickPulse, setClickPulse] = useState(0)
 
-  // ---- Egg evolution ----
-  const [eggClicks, setEggClicks] = useState(0)
   const [eggEvolution, setEggEvolution] = useState<{ id: number; phase: number } | null>(null)
   const prevEggPhase = useRef(0)
   const evoTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // ---- Universal chaos / screamer effects ----
   const [overlay, setOverlay] = useState<OverlayId | null>(null)
   const [winError, setWinError] = useState<WinError | null>(null)
   const [flicker, setFlicker] = useState(false)
   const [zenMessage, setZenMessage] = useState<ZenMessage | null>(null)
-  const [eggEscape, setEggEscape] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
   const eventRef = useRef(event)
-  eventRef.current = event
   const clicksRef = useRef(clicks)
-  clicksRef.current = clicks
   const overlayRef = useRef(overlay)
-  overlayRef.current = overlay
   const lastMilestone = useRef(Math.floor(clicks / 1000))
 
   const playerClicks = useRef(0)
-  const nextScreamer = useRef(200 + Math.floor(Math.random() * 300))
+  const userIdRef = useRef<string | null>(null)
+  const usernameRef = useRef<string | null>(null)
+  const serverLeaderboard = useRef<ServerLeaderboardEntry[]>([])
+  const nextScreamer = useRef<number | null>(null)
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const overlayTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cringeTimers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const pushTicker = useCallback((user: string, text: string, system = false) => {
     setTicker((prev) => {
@@ -99,17 +125,25 @@ export function useChaosGame() {
     })
   }, [])
 
-  // Seed leaderboard once
+  const pushScreenEmote = useCallback((user: string, emote: string) => {
+    setScreenEmotes((prev) => [...prev, { id: screenEmoteId++, user, emote }].slice(-120))
+  }, [])
+
   useEffect(() => {
-    const rows: LeaderRow[] = FAKE_USERS.slice(0, 9).map((name) => ({
-      name,
-      clicks: Math.floor(2000 + Math.random() * 9000),
-    }))
-    rows.push({ name: "YOU", clicks: 1240, you: true })
-    rows.sort((a, b) => b.clicks - a.clicks)
-    setLeaderboard(rows)
-    pushTicker("SYSTEM", "EGGCORP PORTAL v3.1 initialized. Welcome, employee.", true)
-  }, [pushTicker])
+    themeRef.current = theme
+  }, [theme])
+
+  useEffect(() => {
+    eventRef.current = event
+  }, [event])
+
+  useEffect(() => {
+    clicksRef.current = clicks
+  }, [clicks])
+
+  useEffect(() => {
+    overlayRef.current = overlay
+  }, [overlay])
 
   const triggerShake = useCallback(() => setShakeKey((k) => k + 1), [])
 
@@ -119,7 +153,65 @@ export function useChaosGame() {
     noticeTimer.current = setTimeout(() => setNotice(null), ms)
   }, [])
 
-  // ---- Overlay controller ----
+  const mergeLeaderboard = useCallback((entries: ServerLeaderboardEntry[]) => {
+    setLeaderboard(
+      buildLeaderboardRows(
+        entries,
+        userIdRef.current,
+        usernameRef.current ?? "YOU",
+        playerClicks.current,
+      ),
+    )
+  }, [])
+
+  const applyPresence = useCallback((count: number | undefined, users: ServerConnectedUser[]) => {
+    if (count !== undefined) {
+      setConnectedUsers(Math.max(0, Math.floor(count)))
+    } else if (users.length > 0) {
+      setConnectedUsers(users.length)
+    }
+
+    if (users.length > 0 || count === 0) {
+      setConnectedUserList(buildConnectedUserRows(users, userIdRef.current, usernameRef.current))
+    }
+  }, [])
+
+  const applyServerClickCount = useCallback(
+    (rawClicks: number, announceMilestones = false) => {
+      const nextClicks = Math.max(0, Math.floor(rawClicks))
+      const previousClicks = clicksRef.current
+      if (previousClicks === nextClicks) return
+
+      const milestone = Math.floor(nextClicks / 1000)
+      const nextPhase = eggPhaseFor(nextClicks)
+      const previousPhase = prevEggPhase.current
+
+      clicksRef.current = nextClicks
+      lastMilestone.current = milestone
+      prevEggPhase.current = nextPhase
+      setClicks(nextClicks)
+
+      if (announceMilestones && milestone > Math.floor(previousClicks / 1000)) {
+        setMilestoneKey((k) => k + 1)
+        sfx.milestone()
+        triggerShake()
+      }
+
+      if (announceMilestones && nextPhase > previousPhase) {
+        const t = themeRef.current
+        setEggEvolution({ id: errId++, phase: nextPhase })
+        setMilestoneKey((k) => k + 1)
+        triggerShake()
+        if (t === "minimal") sfx.chime()
+        else if (t === "terminal") sfx.chaos()
+        else sfx.milestone()
+        if (evoTimer.current) clearTimeout(evoTimer.current)
+        evoTimer.current = setTimeout(() => setEggEvolution(null), 2200)
+      }
+    },
+    [triggerShake],
+  )
+
   const showOverlay = useCallback(
     (id: OverlayId) => {
       if (overlayRef.current) return
@@ -132,7 +224,6 @@ export function useChaosGame() {
       if (overlayTimer.current) clearTimeout(overlayTimer.current)
       overlayTimer.current = setTimeout(() => {
         setOverlay(null)
-        // Minimal theme: apologize after the WHY screamer.
         if (id === "SCREAMER_WHY") {
           setZenMessage({ id: errId++, text: "Sorry, system glitch.", scary: false })
           setTimeout(() => setZenMessage(null), 3200)
@@ -142,7 +233,6 @@ export function useChaosGame() {
     [triggerShake],
   )
 
-  // ---- Mute wiring ----
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m
@@ -151,15 +241,17 @@ export function useChaosGame() {
     })
   }, [])
 
-  // ---- Start a status event ----
   const startEvent = useCallback(
-    (id: Exclude<EventId, "NORMAL">) => {
-      if (eventRef.current !== "NORMAL") return
+    (
+      id: Exclude<EventId, "NORMAL">,
+      options: { durationSeconds?: number; message?: string } = {},
+    ) => {
       setEvent(id)
-      setEventTimeLeft(EVENTS[id].duration)
+      setEventTimeLeft(options.durationSeconds ?? EVENTS[id].duration)
+      setEventMessage(options.message ?? null)
       sfx.eventStart()
       triggerShake()
-      pushTicker("SYSTEM", `EVENT TRIGGERED: ${EVENTS[id].label}`, true)
+      pushTicker("SYSTEM", options.message ?? `EVENT TRIGGERED: ${EVENTS[id].label}`, true)
       if (id === "BUREAUCRACY") setBureaucracyOpen(true)
     },
     [pushTicker, triggerShake],
@@ -169,14 +261,13 @@ export function useChaosGame() {
     const ending = eventRef.current
     setEvent("NORMAL")
     setEventTimeLeft(0)
+    setEventMessage(null)
     setBureaucracyOpen(false)
     if (ending !== "NORMAL") {
       sfx.eventEnd()
-      pushTicker("SYSTEM", `Threat neutralized. STATUS restored to NORMAL.`, true)
     }
-  }, [pushTicker])
+  }, [])
 
-  // ---- Event countdown ----
   useEffect(() => {
     if (event === "NORMAL") return
     const t = setInterval(() => {
@@ -191,38 +282,202 @@ export function useChaosGame() {
     return () => clearInterval(t)
   }, [event, endEvent])
 
-  // ---- Random status-event scheduler ----
-  useEffect(() => {
-    const t = setInterval(() => {
-      if (eventRef.current !== "NORMAL") return
-      const roll = Math.random()
-      const chance = chaosMode ? 0.5 : 0.22
-      if (roll < chance) {
-        const ids = Object.keys(EVENTS) as Array<Exclude<EventId, "NORMAL">>
-        startEvent(randomFrom(ids))
-      }
-    }, 8000)
-    return () => clearInterval(t)
-  }, [startEvent, chaosMode])
+  const syncLeaderboard = useCallback(async () => {
+    try {
+      const entries = await fetchChaosLeaderboard()
+      if (!entries) return
+      serverLeaderboard.current = entries
+      mergeLeaderboard(entries)
+    } catch {
+      mergeLeaderboard(serverLeaderboard.current)
+    }
+  }, [mergeLeaderboard])
 
-  // ---- Egg-escape & infinite-loop scheduler (all themes) ----
+  const syncState = useCallback(async () => {
+    try {
+      const payload = await fetchChaosState()
+      if (!payload) return
+
+      if (payload.clicks !== undefined) applyServerClickCount(payload.clicks, false)
+      applyPresence(payload.connectedUsers, payload.users)
+
+      const activeEvent = parseServerEventPayload(payload.activeEvent)
+      if (activeEvent) {
+        const mappedEvent = SERVER_EVENT_TO_CLIENT[activeEvent.code]
+        if (mappedEvent) {
+          startEvent(mappedEvent, {
+            durationSeconds: activeEvent.durationSeconds,
+            message: activeEvent.message,
+          })
+        }
+      }
+    } catch {
+      return
+    }
+  }, [applyPresence, applyServerClickCount, startEvent])
+
+  const handleServerMessage = useCallback(
+    (message: ServerMessage) => {
+      const data = asRecord(message.data)
+
+      if (message.type === "welcome") {
+        const nextUserId = stringFrom(data?.userId)
+        const nextUsername = stringFrom(data?.username)
+        if (nextUserId) {
+          userIdRef.current = nextUserId
+        }
+        if (nextUsername) {
+          usernameRef.current = nextUsername
+          setUsername(nextUsername)
+        }
+        applyPresence(numberFrom(data?.connectedUsers), connectedUsersFrom(data?.users))
+        pushTicker("SERVER", `${nextUsername ?? nextUserId ?? "Employee"} connected.`, true)
+        mergeLeaderboard(serverLeaderboard.current)
+        void syncLeaderboard()
+        return
+      }
+
+      if (message.type === "presence_update") {
+        applyPresence(numberFrom(data?.connectedUsers), connectedUsersFrom(data?.users))
+        return
+      }
+
+      if (
+        message.type === "user_joined" ||
+        message.type === "user_connected" ||
+        message.type === "user_disconnected"
+      ) {
+        applyPresence(numberFrom(data?.connectedUsers), connectedUsersFrom(data?.users))
+        const connectedUserId = stringFrom(data?.userId) ?? stringFrom(message.userId)
+        if (connectedUserId && connectedUserId === userIdRef.current) return
+        pushTicker(
+          "SERVER",
+          `${actorFrom(message, data)} ${message.type === "user_disconnected" ? "disconnected" : "connected"}.`,
+          true,
+        )
+        return
+      }
+
+      if (message.type === "state_update") {
+        const nextClicks = numberFrom(data?.clickCount)
+        const leaderboardEntries = leaderboardEntriesFrom(data?.leaderboard)
+        if (leaderboardEntries.length > 0) {
+          serverLeaderboard.current = leaderboardEntries
+          mergeLeaderboard(leaderboardEntries)
+        }
+        applyPresence(numberFrom(data?.connectedUsers), connectedUsersFrom(data?.users))
+        if (nextClicks !== undefined) {
+          const previousClicks = clicksRef.current
+          applyServerClickCount(nextClicks, true)
+          const userClicks = numberFrom(data?.userClicks)
+          if (userClicks !== undefined && stringFrom(data?.userId) === userIdRef.current) {
+            playerClicks.current = Math.max(0, Math.floor(userClicks))
+            mergeLeaderboard(serverLeaderboard.current)
+          }
+          if (nextClicks !== previousClicks) {
+            const actor = actorFrom(message, data)
+            const hasActor = actor !== "EGG-SERVICE"
+            pushTicker(
+              actor,
+              hasActor ? `clicked the egg (#${nextClicks})` : `registered egg click #${nextClicks}`,
+              !hasActor,
+            )
+          }
+        }
+        return
+      }
+
+      if (message.type === "click") {
+        const nextClicks = numberFrom(data?.clickCount)
+        if (nextClicks !== undefined) applyServerClickCount(nextClicks, true)
+        pushTicker(actorFrom(message, data), "clicked the egg")
+        return
+      }
+
+      if (message.type === "emote" || message.type === "reaction") {
+        const emote = emoteFrom(data)
+        const actor = actorFrom(message, data)
+        if (emote) {
+          pushScreenEmote(actor, emote)
+          pushTicker(actor, `threw ${emote}`)
+        } else {
+          pushTicker(actor, "sent a reaction")
+        }
+        return
+      }
+
+      if (message.type === "event" || message.type === "event_start") {
+        const serverEvent = parseServerEventPayload(message.data)
+        if (!serverEvent) return
+
+        const mappedEvent = SERVER_EVENT_TO_CLIENT[serverEvent.code]
+        if (!mappedEvent) {
+          const messageText = serverEvent.message ?? `Server event: ${serverEvent.code}`
+          showNotice(messageText, 3200)
+          pushTicker("SYSTEM", messageText, true)
+          setMilestoneKey((k) => k + 1)
+          triggerShake()
+          return
+        }
+
+        startEvent(mappedEvent, {
+          durationSeconds: serverEvent.durationSeconds,
+          message: serverEvent.message,
+        })
+        return
+      }
+
+      if (message.type === "event_end") {
+        endEvent()
+      }
+    },
+    [
+      applyPresence,
+      applyServerClickCount,
+      endEvent,
+      mergeLeaderboard,
+      pushScreenEmote,
+      pushTicker,
+      showNotice,
+      startEvent,
+      syncLeaderboard,
+      triggerShake,
+    ],
+  )
+
+  const handleSocketOpen = useCallback(() => {
+    void syncState()
+    void syncLeaderboard()
+  }, [syncLeaderboard, syncState])
+
+  const handleInvalidServerMessage = useCallback(() => {
+    showNotice("Received unreadable egg-service message.", 2200)
+  }, [showNotice])
+
+  const { connectionStatus, sendJson } = useChaosSocket({
+    onMessage: handleServerMessage,
+    onOpen: handleSocketOpen,
+    onInvalidMessage: handleInvalidServerMessage,
+  })
+
+  useEffect(() => {
+    const leaderboardTimer = setInterval(() => {
+      void syncLeaderboard()
+    }, 10000)
+
+    return () => clearInterval(leaderboardTimer)
+  }, [syncLeaderboard])
+
   useEffect(() => {
     const t = setInterval(() => {
       if (overlayRef.current || eventRef.current !== "NORMAL") return
-      const roll = Math.random()
-      if (roll < 0.16) {
-        // Egg escapes — flees the cursor for 10s
-        setEggEscape(true)
-        pushTicker("SYSTEM", "WARNING: egg has gained object permanence and is fleeing.", true)
-        setTimeout(() => setEggEscape(false), 10000)
-      } else if (roll < 0.24) {
+      if (Math.random() < 0.08) {
         showOverlay("INFINITE_LOOP")
       }
     }, 14000)
     return () => clearInterval(t)
-  }, [pushTicker, showOverlay])
+  }, [showOverlay])
 
-  // ---- Win95-only: screen flicker + BSOD + error popups ----
   useEffect(() => {
     if (theme !== "win95") return
     const flick = setInterval(() => {
@@ -247,7 +502,6 @@ export function useChaosGame() {
     }
   }, [theme, showOverlay])
 
-  // ---- Terminal-only: random SYSTEM BREACH ----
   useEffect(() => {
     if (theme !== "terminal") return
     const t = setInterval(() => {
@@ -256,37 +510,6 @@ export function useChaosGame() {
     return () => clearInterval(t)
   }, [theme, showOverlay])
 
-  // ---- Simulated crowd: clicks, ticker, leaderboard ----
-  useEffect(() => {
-    const t = setInterval(
-      () => {
-        const inverted = eventRef.current === "INVERSION"
-        const burst = Math.floor(1 + Math.random() * (chaosMode ? 40 : 9))
-        setClicks((c) => Math.max(0, inverted ? c - burst : c + burst))
-
-        const user = randomFrom(FAKE_USERS)
-        const roll = Math.random()
-        if (roll < 0.6) pushTicker(user, randomFrom(ACTIONS))
-        else if (roll < 0.85) pushTicker(user, `threw ${randomFrom(EMOTES)}`)
-        else pushTicker(user, `reached a new personal worst`)
-
-        setLeaderboard((rows) => {
-          if (rows.length === 0) return rows
-          const next = rows.map((r) =>
-            !r.you && Math.random() < 0.5
-              ? { ...r, clicks: r.clicks + Math.floor(1 + Math.random() * 20) }
-              : r,
-          )
-          next.sort((a, b) => b.clicks - a.clicks)
-          return next
-        })
-      },
-      chaosMode ? 450 : 1100,
-    )
-    return () => clearInterval(t)
-  }, [pushTicker, chaosMode])
-
-  // Overlays that fully block egg interaction.
   const clickBlocked =
     bureaucracyOpen ||
     winError !== null ||
@@ -295,72 +518,68 @@ export function useChaosGame() {
     overlay === "CRASH"
 
   const clickBlockedRef = useRef(clickBlocked)
-  clickBlockedRef.current = clickBlocked
 
-  // ---- Time paradox: rewind the counter ----
+  useEffect(() => {
+    clickBlockedRef.current = clickBlocked
+  }, [clickBlocked])
+
   const timeParadox = useCallback(() => {
     sfx.crash()
     triggerShake()
-    setClicks((c) => Math.max(0, c - 1000))
-    showNotice("TIME PARADOX — You clicked too hard. Time reversed.", 3200)
-    pushTicker("SYSTEM", "Temporal integrity compromised. -1000 clicks.", true)
-  }, [triggerShake, showNotice, pushTicker])
+    showNotice("TIME PARADOX — Server authority rejected the rewind.", 3200)
+  }, [triggerShake, showNotice])
 
-  // ---- Player click ----
   const handleClick = useCallback(() => {
     if (clickBlockedRef.current) {
       sfx.denied()
       return
     }
-    const inverted = eventRef.current === "INVERSION"
+
     const t = themeRef.current
-    if (t === "terminal") sfx.type()
-    else sfx.click()
-    setClickPulse((p) => p + 1)
+    const previousPlayerClicks = playerClicks.current
+    const comboClicks =
+      t === "cringe"
+        ? CRINGE_CLICK_COMBOS[previousPlayerClicks % CRINGE_CLICK_COMBOS.length]
+        : 1
 
-    setClicks((c) => {
-      const next = Math.max(0, inverted ? c - 1 : c + 1)
-      const milestone = Math.floor(next / 1000)
-      if (!inverted && milestone > lastMilestone.current) {
-        lastMilestone.current = milestone
-        setMilestoneKey((k) => k + 1)
-        sfx.milestone()
-        triggerShake()
-        pushTicker("SYSTEM", `MILESTONE: ${milestone * 1000} global clicks reached!`, true)
-      }
-      return next
-    })
-
-    setLeaderboard((rows) => {
-      const next = rows.map((r) =>
-        r.you ? { ...r, clicks: Math.max(0, inverted ? r.clicks - 1 : r.clicks + 1) } : r,
-      )
-      next.sort((a, b) => b.clicks - a.clicks)
-      return next
-    })
-
-    // ----- Player-click driven chaos -----
-    playerClicks.current += 1
-    const pc = playerClicks.current
-    setEggClicks(pc)
-
-    // ----- Egg evolution: phases at 100 / 500 / 1000 clicks -----
-    const phase = eggPhaseFor(pc)
-    if (phase > prevEggPhase.current) {
-      prevEggPhase.current = phase
-      setEggEvolution({ id: errId++, phase })
-      setMilestoneKey((k) => k + 1)
-      triggerShake()
-      // Theme-flavored evolution cue.
-      if (t === "minimal") sfx.chime()
-      else if (t === "terminal") sfx.chaos()
-      else sfx.milestone()
-      pushTicker("SYSTEM", `${EGG_PHASE_LABELS[phase]} — egg integrity compromised.`, true)
-      if (evoTimer.current) clearTimeout(evoTimer.current)
-      evoTimer.current = setTimeout(() => setEggEvolution(null), 2200)
+    if (!sendJson({ type: "click", data: {} })) {
+      sfx.denied()
+      showNotice("egg-service is offline. Reconnecting...", 2200)
+      return
     }
 
-    // Minimal theme zen + contrast screamer
+    if (t === "terminal") sfx.type()
+    else if (t === "cringe") sfx.emote()
+    else sfx.click()
+
+    if (t === "cringe") {
+      if (comboClicks > 1) {
+        showNotice(`CRINGE CLICK TAX x${comboClicks}`, 1200)
+      }
+
+      for (let i = 1; i < comboClicks; i++) {
+        const timer = setTimeout(() => {
+          cringeTimers.current = cringeTimers.current.filter((queuedTimer) => queuedTimer !== timer)
+          if (!clickBlockedRef.current) {
+            sendJson({ type: "click", data: {} })
+          }
+        }, i * CRINGE_CLICK_DELAY_MS)
+        cringeTimers.current.push(timer)
+      }
+
+      if (previousPlayerClicks % 4 === 0) {
+        const timer = setTimeout(() => {
+          cringeTimers.current = cringeTimers.current.filter((queuedTimer) => queuedTimer !== timer)
+          sendJson({ type: "emote", data: { emote: randomFrom(CRINGE_AUTO_EMOTES) } })
+        }, comboClicks * CRINGE_CLICK_DELAY_MS)
+        cringeTimers.current.push(timer)
+      }
+    }
+
+    playerClicks.current = previousPlayerClicks + comboClicks
+    const pc = playerClicks.current
+    mergeLeaderboard(serverLeaderboard.current)
+
     if (t === "minimal") {
       if (pc % 100 === 0) {
         showOverlay("SCREAMER_WHY")
@@ -371,7 +590,10 @@ export function useChaosGame() {
       }
     }
 
-    // Screamers every 200–500 clicks (all themes)
+    if (nextScreamer.current === null) {
+      nextScreamer.current = pc + 200 + Math.floor(Math.random() * 300)
+    }
+
     if (pc >= nextScreamer.current) {
       nextScreamer.current = pc + 200 + Math.floor(Math.random() * 300)
       if (!overlayRef.current) {
@@ -380,42 +602,39 @@ export function useChaosGame() {
       }
     }
 
-    // Server maintenance: 5% chance every 100 clicks
     if (pc % 100 === 0 && Math.random() < 0.05 && !overlayRef.current) {
       showOverlay("MAINTENANCE")
     }
 
-    // Time paradox: 1% chance per click
     if (Math.random() < 0.01) timeParadox()
-  }, [pushTicker, triggerShake, showOverlay, timeParadox])
+  }, [mergeLeaderboard, sendJson, showNotice, showOverlay, timeParadox])
 
   const emoteClicks = useRef(0)
   const registerEmote = useCallback(
     (emote: string) => {
       sfx.emote()
-      pushTicker("YOU", `threw ${emote}`)
+      if (!sendJson({ type: "emote", data: { emote } })) {
+        showNotice("egg-service is offline. Reaction was not sent.", 2200)
+      }
       emoteClicks.current += 1
       if (emoteClicks.current % 5 === 0) sfx.chaching()
     },
-    [pushTicker],
+    [sendJson, showNotice],
   )
 
   const acceptAgreement = useCallback(() => {
     sfx.chaching()
-    pushTicker("YOU", "signed the User Agreement (under duress)", true)
-    endEvent()
-  }, [pushTicker, endEvent])
+    setBureaucracyOpen(false)
+  }, [])
 
   const dismissWinError = useCallback(() => setWinError(null), [])
 
-  // ---- Chaos mode (Konami) ----
   const enableChaos = useCallback(() => {
     if (chaosMode) return
     setChaosMode(true)
     sfx.chaos()
     triggerShake()
-    pushTicker("SYSTEM", "!!! CHAOS MODE ENGAGED — ALL SAFETIES DISABLED !!!", true)
-  }, [chaosMode, pushTicker, triggerShake])
+  }, [chaosMode, triggerShake])
 
   useEffect(() => {
     let idx = 0
@@ -440,6 +659,8 @@ export function useChaosGame() {
       if (noticeTimer.current) clearTimeout(noticeTimer.current)
       if (overlayTimer.current) clearTimeout(overlayTimer.current)
       if (evoTimer.current) clearTimeout(evoTimer.current)
+      cringeTimers.current.forEach((timer) => clearTimeout(timer))
+      cringeTimers.current = []
     }
   }, [])
 
@@ -447,6 +668,7 @@ export function useChaosGame() {
 
   const inverted = event === "INVERSION"
   const gravityFailure = event === "GRAVITY_FAILURE"
+  const eggClicks = clicks
   const eggPhase = eggPhaseFor(eggClicks)
   const eggIntegrity = eggIntegrityFor(eggClicks)
 
@@ -454,30 +676,31 @@ export function useChaosGame() {
     clicks,
     event,
     eventTimeLeft,
+    eventMessage,
     ticker,
     leaderboard,
+    connectedUsers,
+    connectedUserList,
+    screenEmotes,
+    connectionStatus,
+    username,
     muted,
     chaosMode,
     bureaucracyOpen,
     shakeKey,
     milestoneKey,
-    clickPulse,
     inverted,
     gravityFailure,
-    // egg evolution
     eggClicks,
     eggPhase,
     eggIntegrity,
     eggEvolution,
-    // new effects
     overlay,
     winError,
     flicker,
     zenMessage,
-    eggEscape,
     notice,
     clickBlocked,
-    // actions
     toggleMute,
     handleClick,
     registerEmote,

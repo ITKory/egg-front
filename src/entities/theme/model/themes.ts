@@ -1,13 +1,11 @@
-export type ThemeId = "win95" | "y2k" | "minimal" | "terminal"
+export type ThemeId = "win95" | "y2k" | "minimal" | "terminal" | "cringe"
 
 export type ThemeMeta = {
   id: ThemeId
   name: string
   year: string
   tagline: string
-  /** Click count at which this era would unlock in the future progression system. */
   unlockAt: number
-  /** Whether this era is currently locked (all false for now). */
   locked: boolean
 }
 
@@ -42,6 +40,14 @@ export const THEMES: ThemeMeta[] = [
     year: "????",
     tagline: "wake up, clicker.",
     unlockAt: 100000,
+    locked: false,
+  },
+  {
+    id: "cringe",
+    name: "Brainrot Department",
+    year: "2026",
+    tagline: "Absurd clicks, audited by vibes.",
+    unlockAt: 250000,
     locked: false,
   },
 ]

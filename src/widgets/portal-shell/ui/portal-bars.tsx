@@ -1,7 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useTheme } from "@/entities/theme"
+import type { ConnectionStatus } from "@/features/chaos-game"
 import { ThemeSwitcher } from "@/features/theme-switching"
+import DecryptedText from "@/shared/ui/DecryptedText"
+import ShinyText from "@/shared/ui/ShinyText"
 
 function WinLogo() {
   return (
@@ -19,9 +23,33 @@ type TopBarProps = {
   onToggleMute: () => void
   onLogoClick: () => void
   chaosMode: boolean
+  connectionStatus: ConnectionStatus
+  username: string | null
+  connectedUsers: number
 }
 
-export function TopBar({ muted, onToggleMute, onLogoClick, chaosMode }: TopBarProps) {
+const STATUS_LABEL: Record<ConnectionStatus, string> = {
+  connecting: "CONNECTING",
+  connected: "LIVE",
+  reconnecting: "RECONNECTING",
+  disconnected: "OFFLINE",
+  error: "ERROR",
+}
+
+const PORTAL_TITLE = "PORTAL v3.1 — Enterprise Egg Interaction Suite"
+
+export function TopBar({
+  muted,
+  onToggleMute,
+  onLogoClick,
+  chaosMode,
+  connectionStatus,
+  username,
+  connectedUsers,
+}: TopBarProps) {
+  const online = connectionStatus === "connected"
+  const { theme } = useTheme()
+
   return (
     <header className="bevel-out flex items-center justify-between gap-2 bg-[var(--win-navy)] px-2 py-1 text-white no-select">
       <button
@@ -36,12 +64,47 @@ export function TopBar({ muted, onToggleMute, onLogoClick, chaosMode }: TopBarPr
 
       <div className="min-w-0 flex-1 text-center">
         <h1 className="font-ui truncate text-[13px] font-bold tracking-tight sm:text-sm">
-          PORTAL v3.1 — Enterprise Egg Interaction Suite
+          {theme === "minimal" ? (
+            <ShinyText
+              text={PORTAL_TITLE}
+              speed={3}
+              color="#dbeafe"
+              shineColor="#ffffff"
+              spread={115}
+              className="max-w-full truncate align-bottom"
+            />
+          ) : theme === "terminal" ? (
+            <DecryptedText
+              text={PORTAL_TITLE}
+              speed={35}
+              maxIterations={9}
+              sequential
+              revealDirection="start"
+              animateOn="view"
+              characters="01#$%&/\\[]{}<>_"
+              className="text-[#00ff00]"
+              encryptedClassName="text-[#00ff00]/45"
+              parentClassName="max-w-full overflow-hidden text-ellipsis whitespace-nowrap align-bottom"
+            />
+          ) : (
+            PORTAL_TITLE
+          )}
           {chaosMode && <span className="chaos-hue ml-2 text-[var(--win-yellow)]">[CHAOS]</span>}
         </h1>
       </div>
 
       <div className="flex items-center gap-1.5">
+        <div className="bevel-in hidden max-w-[220px] items-center gap-1 bg-[var(--win-gray)] px-2 py-1 text-black sm:flex">
+          <span
+            className={`h-2 w-2 ${online ? "bg-[var(--win-green)]" : "bg-[var(--win-red)]"}`}
+            aria-hidden="true"
+          />
+          <span className="font-pixel truncate text-[10px]">
+            {STATUS_LABEL[connectionStatus]}
+            {` · ${connectedUsers} ONLINE`}
+            {username ? ` · ${username}` : ""}
+          </span>
+        </div>
         <ThemeSwitcher />
         <button
           type="button"

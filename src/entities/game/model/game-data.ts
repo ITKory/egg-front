@@ -3,7 +3,7 @@ export type EventId = "NORMAL" | "GRAVITY_FAILURE" | "INVERSION" | "BUREAUCRACY"
 export type GameEvent = {
   id: EventId
   label: string
-  duration: number // seconds
+  duration: number
   blurb: string
 }
 
@@ -17,8 +17,8 @@ export const EVENTS: Record<Exclude<EventId, "NORMAL">, GameEvent> = {
   INVERSION: {
     id: "INVERSION",
     label: "INVERSION",
-    duration: 12,
-    blurb: "Reality.dll returned a negative value. Everything is upside-down and clicks DEDUCT.",
+    duration: 10,
+    blurb: "Reality.dll returned a negative value. Everything feels suspiciously inverted.",
   },
   BUREAUCRACY: {
     id: "BUREAUCRACY",
@@ -28,52 +28,18 @@ export const EVENTS: Record<Exclude<EventId, "NORMAL">, GameEvent> = {
   },
 }
 
-// Absurd multi-lingual usernames for the simulated crowd.
-export const FAKE_USERS = [
-  "Грустный Пельмень",
-  "Токсичный Кактус",
-  "xX_MiddleManager_Xx",
-  "Clippy_Lives",
-  "归档大师",
-  "BlueScreenBarry",
-  "Соседский Кот",
-  "CtrlAltDefeat",
-  "Madame_Spreadsheet",
-  "おにぎり_99",
-  "DialUpDave",
-  "Synergy_Sandra",
-  "Гусь_Менеджер",
-  "404_Brain",
-  "PivotTablePete",
-  "Quarterly_Greg",
-  "СонныйАдминистратор",
-  "TabsNotSpaces",
-  "Boss_Felix",
-  "WingDingWanda",
-]
-
 export const EMOTES = ["🧊", "🔥", "🍅", "💣", "🎉", "👻"] as const
 export type Emote = (typeof EMOTES)[number]
+export type ScreenEmote = { id: number; emote: string; user: string }
 
-// Hex codepoint labels for the Terminal theme emote buttons.
-export const EMOTE_HEX: Record<string, string> = {
-  "🧊": "0x1F9CA",
-  "🔥": "0x1F525",
-  "🍅": "0x1F345",
-  "💣": "0x1F4A3",
-  "🎉": "0x1F389",
-  "👻": "0x1F47B",
-}
-
-// ----- Universal full-screen "chaos" overlays (theme-agnostic) -----
 export type OverlayId =
-  | "BSOD" // Win95 blue screen of death (~1s)
-  | "MAINTENANCE" // 503 Service Unavailable (~5s)
-  | "INFINITE_LOOP" // recursive tunnel (~3s)
-  | "SCREAMER_STOP" // red flash "STOP CLICKING" (~0.5s)
-  | "SCREAMER_WHY" // minimal "WHY ARE YOU DOING THIS?" (~2s)
-  | "CRASH" // fake "Not Responding" overlay (~2.5s)
-  | "BREACH" // terminal "SYSTEM BREACH" (~1.4s)
+  | "BSOD"
+  | "MAINTENANCE"
+  | "INFINITE_LOOP"
+  | "SCREAMER_STOP"
+  | "SCREAMER_WHY"
+  | "CRASH"
+  | "BREACH"
 
 export const OVERLAY_DURATION: Record<OverlayId, number> = {
   BSOD: 1100,
@@ -85,7 +51,6 @@ export const OVERLAY_DURATION: Record<OverlayId, number> = {
   BREACH: 1400,
 }
 
-// Fake Windows error dialogs (Win95 theme).
 export const WINDOWS_ERRORS = [
   { code: "EGG_NOT_FOUND", msg: "The egg could not be located. It may have been moved or deleted." },
   { code: "CLICK_OVERFLOW", msg: "Click buffer exceeded maximum capacity (255). Please click less." },
@@ -94,7 +59,6 @@ export const WINDOWS_ERRORS = [
   { code: "MEETING_REQUIRED", msg: "This action requires a meeting. A meeting has been scheduled about the meeting." },
 ]
 
-// Calm/zen messages (Minimal theme), shown every 50 clicks.
 export const ZEN_CALM = [
   "You are doing great.",
   "Breathe. The egg is grateful.",
@@ -104,26 +68,9 @@ export const ZEN_CALM = [
   "Each click, a small kindness.",
 ]
 
-export const ACTIONS = [
-  "clicked the egg",
-  "clicked aggressively",
-  "filed a TPS report",
-  "double-clicked (illegal)",
-  "questioned the egg",
-  "achieved synergy",
-  "rage-clicked",
-  "blamed the intern",
-  "scheduled a meeting about the egg",
-  "yelled into the void",
-  "minimized reality",
-  "rebooted their morale",
-]
+export const EGG_MILESTONES = [1000, 2000, 4000] as const
+export const INITIAL_EGG_LIFE = EGG_MILESTONES[0]
 
-// ----- Egg evolution system -----
-// Player-click thresholds that trigger each evolution phase.
-export const EGG_MILESTONES = [100, 500, 1000] as const
-
-// Per-phase dramatic announcement copy (theme-agnostic headline + flavor).
 export const EGG_PHASE_LABELS = [
   "EGG ONLINE",
   "EGG EVOLUTION: PHASE 1",
@@ -131,7 +78,6 @@ export const EGG_PHASE_LABELS = [
   "EGG EVOLUTION: PHASE 3",
 ] as const
 
-// Returns the current phase (0-3) for a given player-click count.
 export function eggPhaseFor(clicks: number): 0 | 1 | 2 | 3 {
   if (clicks >= EGG_MILESTONES[2]) return 3
   if (clicks >= EGG_MILESTONES[1]) return 2
@@ -139,17 +85,20 @@ export function eggPhaseFor(clicks: number): 0 | 1 | 2 | 3 {
   return 0
 }
 
-// Egg "integrity" — degrades from 100% toward 0% as the next milestone nears.
-// At the final phase it stays at 0% (CRITICAL).
 export function eggIntegrityFor(clicks: number): number {
-  if (clicks >= EGG_MILESTONES[2]) return 0
-  const lower = clicks >= EGG_MILESTONES[1] ? EGG_MILESTONES[1] : clicks >= EGG_MILESTONES[0] ? EGG_MILESTONES[0] : 0
-  const upper = clicks >= EGG_MILESTONES[1] ? EGG_MILESTONES[2] : clicks >= EGG_MILESTONES[0] ? EGG_MILESTONES[1] : EGG_MILESTONES[0]
-  const progress = (clicks - lower) / (upper - lower)
-  return Math.max(0, Math.round(100 - progress * 100))
+  const safeClicks = Math.max(0, Math.floor(clicks))
+  let lower = 0
+  let upper = INITIAL_EGG_LIFE
+
+  while (safeClicks >= upper) {
+    lower = upper
+    upper *= 2
+  }
+
+  const progress = (safeClicks - lower) / (upper - lower)
+  return Math.max(0, Math.min(100, Math.round(100 - progress * 100)))
 }
 
-// Terminal-era ASCII egg art, one variant per evolution phase.
 export const ASCII_EGGS: [string, string, string, string] = [
   `   .oOo.
   o     o
@@ -179,12 +128,6 @@ o@OoO@oO@o
 
 export function randomFrom<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
-}
-
-// Format a number as a padded uppercase hex string, e.g. 20266 -> "0x004F2A".
-export function toHex(n: number, pad = 6) {
-  const sign = n < 0 ? "-" : ""
-  return `${sign}0x${Math.abs(n).toString(16).toUpperCase().padStart(pad, "0")}`
 }
 
 export function nowStamp() {
