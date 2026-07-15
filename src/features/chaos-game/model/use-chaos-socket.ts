@@ -8,6 +8,8 @@ import {
 } from "@/features/chaos-game/api/chaos-egg-contract"
 import type { ConnectionStatus } from "./types"
 
+const CONNECT_TIMEOUT_MS = 8000
+
 type UseChaosSocketOptions = {
   onMessage: (message: ServerMessage) => void
   onOpen: () => void
@@ -34,10 +36,24 @@ export function useChaosSocket({ onMessage, onOpen, onInvalidMessage }: UseChaos
     const connect = () => {
       setConnectionStatus((current) => (current === "connected" ? "connected" : "connecting"))
 
-      const ws = new WebSocket(CHAOS_WS_URL)
+      let ws: WebSocket
+      try {
+        ws = new WebSocket(CHAOS_WS_URL)
+      } catch {
+        setConnectionStatus("error")
+        reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY)
+        return
+      }
       wsRef.current = ws
+      const connectTimer = setTimeout(() => {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          setConnectionStatus("error")
+          ws.close()
+        }
+      }, CONNECT_TIMEOUT_MS)
 
       ws.onopen = () => {
+        clearTimeout(connectTimer)
         if (cancelled) return
         setConnectionStatus("connected")
         onOpenRef.current()
@@ -52,10 +68,13 @@ export function useChaosSocket({ onMessage, onOpen, onInvalidMessage }: UseChaos
       }
 
       ws.onerror = () => {
-        if (!cancelled) setConnectionStatus("error")
+        if (cancelled) return
+        setConnectionStatus("error")
+        ws.close()
       }
 
       ws.onclose = () => {
+        clearTimeout(connectTimer)
         if (wsRef.current === ws) wsRef.current = null
         if (cancelled) {
           setConnectionStatus("disconnected")
